@@ -1,13 +1,13 @@
 // ============================================================
 //  定期巡回アプリ（iPad 用・電波なしで動く）
 //  ・施設を選ぶ → しおりQRを画面に出してカメラで撮る（1枚目）
-//  ・撮るたびに「撮った」を押す → カメラの何枚目かを記録
-//  ・損傷が増えたら「＋ここに追加」で枠を足す
+//  ・撮るたびに「OK」を押す → カメラの何枚目かを記録し、その枠は隠す
+//  ・損傷が増えたら「＋追加」で枠を足す（「✕ 追加をやめる」で消せる）
 //  ・帰ったら「記録を書き出す」→ PC の振り分けツールへ
 // ============================================================
 'use strict';
 
-const APP_VER = '1.0.0';
+const APP_VER = '1.1.0';
 const QR_PREFIX = 'JK1';           // QR の中身：JK1/<施設ID>/<iPad番号>/<しおり番号>
 
 // ---------- 設定（この iPad だけ） ----------
@@ -53,8 +53,11 @@ function h(tag, attrs, ...kids) {
   for (const c of kids.flat()) if (c != null && c !== false) el.append(c.nodeType ? c : document.createTextNode(String(c)));
   return el;
 }
-function toast(msg, ms = 2200) {
-  const t = h('div', { class: 'toast' }, msg);
+// action = { label, fn } を渡すと、お知らせに「戻す」などのボタンがつく
+function toast(msg, ms = 2200, action) {
+  document.querySelectorAll('.toast').forEach(x => x.remove());
+  const t = h('div', { class: 'toast' }, h('span', null, msg),
+    action ? h('button', { onclick: () => { t.remove(); action.fn(); } }, action.label) : null);
   document.body.append(t);
   setTimeout(() => t.remove(), ms);
 }
@@ -100,6 +103,14 @@ function nextSlot(rec) {
   return rec.slots.find(s => !rec.skip[s.k] && !shotOf(rec, s.k)) || null;
 }
 async function saveRec(rec) { rec.updated = new Date().toISOString(); await putOne('rec', rec); }
+// 直前の状態を覚えておき、お知らせの「戻す」で元にもどす
+function snap(rec) { return JSON.parse(JSON.stringify(rec)); }
+async function restoreRec(old, msg) {
+  recs.set(old.id, old);
+  await saveRec(old);
+  render();
+  toast(msg || '元に戻しました');
+}
 function slotLabel(rec, s) {
   if (s.type === 'f') return '写真番号 ' + s.n;
   const i = rec.slots.indexOf(s);
@@ -152,7 +163,7 @@ function renderHome() {
         })),
         h('input', { type: 'search', placeholder: '番号・KP・名前でさがす（例 47.1）', value: q, oninput: (e) => { view.q = e.target.value; renderListOnly(); } }),
         h('div', { class: 'list', id: 'faclist', style: 'margin-top:10px' }, facRows(list)),
-        anyRec ? null : h('p', { class: 'muted', style: 'margin-top:18px' }, '使い方：施設を選ぶ →「しおりQR」をカメラで撮る → 写真を撮るたびに「撮った」。'),
+        anyRec ? null : h('p', { class: 'muted', style: 'margin-top:18px' }, '使い方：施設を選ぶ →「しおりQR」をカメラで撮る → 写真を撮るたびに「OK」。'),
       ]));
 }
 function facRows(list) {
@@ -199,9 +210,11 @@ async function renderFac() {
   const st = recStats(rec, fac);
   const camNow = blk ? blk.seq.length + 1 : 0;   // カメラで今まで撮った枚数（この施設のしおりから）
 
+  const showShot = !!view.showShot;   // 撮った枠も見せるか（ふだんは隠す）
   const cards = [];
   rec.slots.forEach((s, i) => {
     const sh = shotOf(rec, s.k);
+    if (sh && !showShot) return;       // 撮った枠は隠す
     const skip = !!rec.skip[s.k];
     const fi = s.type === 'f' ? parseInt(s.k.slice(1)) : -1;
     const img = fi >= 0 ? imgs[fi] : '';
@@ -216,8 +229,9 @@ async function renderFac() {
         h('div', { class: 'cam' }, skip ? '撮らない' : sh ? '📷 カメラ ' + camText(rec, sh) : '未'),
         h('div', { class: 'acts' },
           skip ? h('button', { onclick: () => toggleSkip(rec, s) }, '撮るに戻す') : [
-            h('button', { class: sh ? '' : 'ok', onclick: () => markShot(rec, s) }, sh ? '撮り直した' : '撮った'),
-            s.type === 'a' ? h('button', { onclick: () => editAdd(rec, s) }, '直す') : h('button', { class: 'ghost', onclick: () => toggleSkip(rec, s) }, '撮らない'),
+            h('button', { class: sh ? '' : 'ok', onclick: () => markShot(rec, s) }, sh ? '撮り直しOK' : 'OK'),
+            s.type === 'a' ? h('button', { onclick: () => editAdd(rec, s) }, '直す') : null,
+            s.type === 'a' ? h('button', { class: 'del', onclick: () => removeAdd(rec, s) }, '✕ 追加をやめる') : null,
           ]),
         h('div', { class: 'ins' }, h('button', { onclick: () => addSlot(rec, i + 1) }, '＋ この後に追加の写真')))));
   });
@@ -240,13 +254,19 @@ async function renderFac() {
         h('h3', null, '① 最初に「しおりQR」をカメラで撮ってください'),
         h('p', { class: 'muted', style: 'margin:0 0 10px' }, 'QR が 1枚目になり、そのあとの写真がこの施設の写真になります。'),
         h('button', { class: 'main', onclick: () => showQR(fac, rec) }, 'しおりQRを出す')) : null,
-      h('div', { class: 'grid' }, cards)),
+      st.shot ? h('div', { class: 'hidebar' },
+        h('span', null, showShot ? '撮影済 ' + st.shot + ' 枚も表示しています（緑の枠）' : '撮影済 ' + st.shot + ' 枚は隠しています'),
+        h('button', { onclick: () => { view.showShot = !showShot; render(); } }, showShot ? '撮影済の写真を隠す' : '撮影済の写真を見る・撮り直す')) : null,
+      cards.length ? h('div', { class: 'grid' }, cards)
+        : h('div', { class: 'empty' }, h('h2', { style: 'margin:0 0 6px' }, 'この施設は全部撮りました'),
+            h('p', { class: 'muted', style: 'margin:0' }, '撮り直すときは上の「撮影済の写真を見る・撮り直す」。'))),
     h('div', { class: 'dock' }, h('div', { class: 'in' },
       h('div', { class: 'counter' }, 'カメラ', h('b', null, camNow ? camNow + '枚' : '－')),
       h('div', { class: 'nx' },
         h('div', { class: 'l' }, blk ? (nx ? '次に撮るもの' : 'この施設は全部撮りました') : 'まずしおりQR'),
         h('div', { class: 'v' }, blk ? (nx ? slotLabel(rec, nx) + '　' + (nx.pos || '') : '一覧に戻って次の施設へ') : '右のボタンで QR を出す')),
-      blk ? (nx ? h('button', { class: 'ok big', onclick: () => markShot(rec, nx) }, '撮った ✓') : h('button', { class: 'main big', onclick: () => go({ name: 'home' }) }, '一覧へ'))
+      blk ? h('button', { class: 'addbtn', onclick: () => addSlot(rec, nx ? rec.slots.indexOf(nx) : rec.slots.length) }, '＋追加') : null,
+      blk ? (nx ? h('button', { class: 'ok big', onclick: () => markShot(rec, nx) }, 'OK ✓') : h('button', { class: 'main big', onclick: () => go({ name: 'home' }) }, '一覧へ'))
         : h('button', { class: 'main big', onclick: () => showQR(fac, rec) }, 'しおりQR'))));
 
   if (nx && view.scrollNext) {
@@ -265,15 +285,18 @@ async function markShot(rec, s) {
   }
   const sh = shotOf(rec, s.k);
   if (sh) {
-    const ok = await confirmBox('撮り直しますか？', slotLabel(rec, s) + ' は「カメラ ' + camText(rec, sh) + '」で撮っています。今撮った写真を使い、前の写真は使わないことにします。', '撮り直した');
+    const ok = await confirmBox('撮り直しますか？', slotLabel(rec, s) + ' は「カメラ ' + camText(rec, sh) + '」で撮っています。今撮った写真を使い、前の写真は使わないことにします。', '撮り直しOK');
     if (!ok) return;
-    for (const b of rec.blocks) for (const e of b.seq) if (e.k === s.k) e.k = null;
   }
+  const old = snap(rec);
+  if (sh) for (const b of rec.blocks) for (const e of b.seq) if (e.k === s.k) e.k = null;
   blk.seq.push({ k: s.k, at: new Date().toISOString() });
   await saveRec(rec);
   view.scrollNext = true;
   render();
-  toast(slotLabel(rec, s) + ' → カメラ ' + (blk.seq.length + 1) + '枚目', 1400);
+  const lbl = slotLabel(rec, s);
+  toast(lbl + ' → カメラ ' + (blk.seq.length + 1) + '枚目（撮影済・隠しました）', 5000,
+    { label: '戻す', fn: () => restoreRec(old, lbl + ' を「未」に戻しました') });
 }
 async function discard(rec) {
   const blk = curBlock(rec); if (!blk) return;
@@ -302,29 +325,43 @@ async function toggleSkip(rec, s) {
   } else delete rec.skip[s.k];
   await saveRec(rec); render();
 }
+// at の位置（その前の枠のうしろ）に追加の枠を入れる
 async function addSlot(rec, at) {
+  let prev = null;
+  for (let j = at - 1; j >= 0; j--) if (rec.slots[j].type === 'f') { prev = rec.slots[j]; break; }
+  const where = prev ? '写真番号 ' + prev.n + ' の後に入ります' : '先頭に入ります';
   const pos = h('input', { placeholder: '位置（例 起点L側壁 ひび割れ）' });
   const memo = h('textarea', { rows: 3, placeholder: 'メモ（損傷の様子など。なくてもよい）' });
-  const ok = await modal('写真を追加', h('div', { class: 'list' }, pos, memo),
+  const ok = await modal('写真を追加', h('div', { class: 'list' }, h('p', { class: 'muted', style: 'margin:0' }, where), pos, memo),
     [{ label: 'やめる', value: false }, { label: '追加する', value: true, cls: 'main' }]);
   if (!ok) return;
+  const old = snap(rec);
   let max = 0; for (const s of rec.slots) if (s.type === 'a') max = Math.max(max, parseInt(s.k.slice(1)));
   const s = { k: 'a' + (max + 1), type: 'a', pos: pos.value.trim(), memo: memo.value.trim() };
   rec.slots.splice(at, 0, s);
   await saveRec(rec); render();
+  toast('追加しました：' + slotLabel(rec, s), 5000, { label: '取り消す', fn: () => restoreRec(old, '追加を取り消しました') });
   setTimeout(() => { const el = document.getElementById('c_' + s.k); if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 50);
+}
+// 追加の枠をやめる（撮っていたら、その写真は使わない写真になる）
+async function removeAdd(rec, s) {
+  const sh = shotOf(rec, s.k);
+  const msg = slotLabel(rec, s) + (s.pos ? '（' + s.pos + '）' : '') + ' をやめます。' +
+    (sh ? '\nカメラ ' + camText(rec, sh) + ' の写真は「使わない写真」になります。' : '');
+  if (!await confirmBox('追加をやめますか？', msg, 'やめる（消す）', '残す')) return;
+  const old = snap(rec);
+  for (const b of rec.blocks) for (const e of b.seq) if (e.k === s.k) e.k = null;
+  rec.slots.splice(rec.slots.indexOf(s), 1);
+  await saveRec(rec); render();
+  toast('追加をやめました', 5000, { label: '戻す', fn: () => restoreRec(old, '追加の枠を戻しました') });
 }
 async function editAdd(rec, s) {
   const pos = h('input', { value: s.pos || '', placeholder: '位置' });
   const memo = h('textarea', { rows: 3, placeholder: 'メモ' }); memo.value = s.memo || '';
   const r = await modal('追加の写真を直す', h('div', { class: 'list' }, pos, memo),
-    [{ label: 'この枠を消す', value: 'del' }, { label: 'やめる', value: false }, { label: '保存', value: 'save', cls: 'main' }]);
-  if (r === 'save') { s.pos = pos.value.trim(); s.memo = memo.value.trim(); }
-  else if (r === 'del') {
-    if (!await confirmBox('追加の枠を消しますか？', '撮った写真は「使わない写真」になります。', '消す')) return;
-    for (const b of rec.blocks) for (const e of b.seq) if (e.k === s.k) e.k = null;
-    rec.slots.splice(rec.slots.indexOf(s), 1);
-  } else return;
+    [{ label: 'やめる', value: false }, { label: '保存', value: 'save', cls: 'main' }]);
+  if (r !== 'save') return;
+  s.pos = pos.value.trim(); s.memo = memo.value.trim();
   await saveRec(rec); render();
 }
 
@@ -353,7 +390,7 @@ async function showQR(fac, rec) {
     h('div', { class: 't2' }, 'iPad ' + settings.deviceNo + '　しおり ' + blk.b + '　' + new Date().toLocaleDateString('ja-JP')),
     h('div', { class: 'acts' },
       h('button', { onclick: async () => { if (!blk.seq.length && rec.blocks.length && curBlock(rec) === blk) { rec.blocks.pop(); await saveRec(rec); } close(); } }, '撮らずに戻る'),
-      h('button', { class: 'ok', onclick: close }, 'カメラで撮った ✓')));
+      h('button', { class: 'ok', onclick: close }, 'QR OK ✓')));
   document.body.append(el);
   view.scrollNext = true;
 }
@@ -444,8 +481,9 @@ function renderSettings() {
       h('div', { class: 'sec help' }, h('h3', null, '使い方'),
         h('ol', null,
           h('li', null, '施設を選び「しおりQR」を出して、カメラで QR を撮る（その施設の 1枚目）。'),
-          h('li', null, '去年の写真と同じように撮り、撮るたびに下の「撮った ✓」を押す（順番がちがうときはその枠の「撮った」）。'),
-          h('li', null, '損傷が増えていたら、枠の間の「＋ ここに追加」で枠を足して撮る。'),
+          h('li', null, '去年の写真と同じように撮り、撮るたびに下の「OK ✓」を押す（順番がちがうときはその枠の「OK」）。'),
+          h('li', null, '撮影済の枠は隠れます。まちがえたら、お知らせの「戻す」か「1つ戻す」。撮り直すときは「撮影済の写真を見る・撮り直す」。'),
+          h('li', null, '損傷が増えていたら、下の「＋追加」（次に撮る枠の前に入る）か、枠の「＋ この後に追加の写真」で枠を足して撮る。いらなくなったら「✕ 追加をやめる」。'),
           h('li', null, '失敗して余分に撮ったら「撮り損じ」、押しまちがえたら「1つ戻す」。'),
           h('li', null, '帰ったら「記録を書き出す」で PC へ送る（AirDrop・メール・ファイル保存）。'))),
       h('p', { class: 'muted' }, 'アプリ ' + APP_VER)));
@@ -471,5 +509,11 @@ function render() {
   if (m) view = { name: 'fac', id: decodeURIComponent(m[1]) };
   else if (location.hash === '#settings') view = { name: 'settings' };
   render();
-  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    // 新しい版が入ったら 1 回だけ自動で開き直す
+    const hadOld = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadOld && !reloaded) { reloaded = true; location.reload(); } });
+    navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
+  }
 })();

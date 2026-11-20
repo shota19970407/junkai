@@ -1,9 +1,10 @@
 // 電波がなくても動くように、アプリの部品を iPad にしまっておく
-const CACHE = 'junkai-v1.0.0';
+const CACHE = 'junkai-v1.1.0';   // アプリを直したら、ここの番号を上げる
 const FILES = ['./', './index.html', './app.js', './qrcode.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // 古いものを使わず、必ずサーバーから取り直す
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
