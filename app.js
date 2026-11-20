@@ -7,7 +7,7 @@
 // ============================================================
 'use strict';
 
-const APP_VER = '1.1.0';
+const APP_VER = '1.2.0';
 const QR_PREFIX = 'JK1';           // QR の中身：JK1/<施設ID>/<iPad番号>/<しおり番号>
 
 // ---------- 設定（この iPad だけ） ----------
@@ -170,10 +170,11 @@ function facRows(list) {
   if (!list.length) return [h('p', { class: 'muted' }, '見つかりません')];
   return list.map(f => {
     const s = recStats(recs.get(f.id), f);
+    const done = s.started && s.shot >= s.total;   // 全部撮り終わった施設はグレーにする
     const st = !s.started ? h('span', { class: 'badge' }, '未 ' + s.total + '枚')
-      : s.shot >= s.total ? h('span', { class: 'badge done' }, '済 ' + s.shot + '/' + s.total)
+      : done ? h('span', { class: 'badge done' }, '✓ 済 ' + s.shot + '/' + s.total)
       : h('span', { class: 'badge part' }, '途中 ' + s.shot + '/' + s.total);
-    return h('button', { class: 'fac', onclick: () => go({ name: 'fac', id: f.id }) },
+    return h('button', { class: 'fac' + (done ? ' done' : ''), onclick: () => go({ name: 'fac', id: f.id }) },
       h('span', { class: 'no' }, f.no),
       h('span', { class: 'nm' }, f.name, f.struct && f.struct !== f.name ? h('small', null, f.struct) : null),
       s.adds ? h('span', { class: 'badge part' }, '追加' + s.adds) : null, st);
