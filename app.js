@@ -7,7 +7,7 @@
 // ============================================================
 'use strict';
 
-const APP_VER = '1.2.0';
+const APP_VER = '1.3.0';
 const QR_PREFIX = 'JK1';           // QR の中身：JK1/<施設ID>/<iPad番号>/<しおり番号>
 
 // ---------- 設定（この iPad だけ） ----------
@@ -409,31 +409,52 @@ function pickFiles(accept, multiple) {
   });
 }
 async function importData() {
-  const files = await pickFiles('.json,application/json', true);
+  const files = (await pickFiles('.json,application/json', true)).filter(f => /\.json$/i.test(f.name));
   if (!files.length) return;
-  let nFac = 0, nImg = 0, bad = [];
-  for (const file of files) {
+  try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
+  // 読み込み中の表示（ファイルがたくさんあっても進み具合がわかるように）
+  const bar = h('div', { class: 'pbar' }, h('div'));
+  const txt = h('p', { style: 'margin:8px 0 0' }, '');
+  const ov = h('div', { class: 'modal' }, h('div', { class: 'box' }, h('h2', null, 'データを読み込んでいます'), bar, txt,
+    h('p', { class: 'muted' }, '終わるまで、アプリを閉じないでください。')));
+  document.body.append(ov);
+  let nFac = 0, nImg = 0, bad = [], stop = '';
+  for (let fi = 0; fi < files.length; fi++) {
+    const file = files[fi];
+    bar.firstChild.style.width = Math.round(100 * fi / files.length) + '%';
+    txt.textContent = (fi + 1) + ' / ' + files.length + '　' + file.name;
     let d;
     try { d = JSON.parse(await file.text()); } catch (e) { bad.push(file.name); continue; }
     if (!d || d.kind !== 'junkai-data') { bad.push(file.name); continue; }
-    for (const f of d.facilities) {
-      const fac = { id: f.id, route: d.route, category: d.category, no: f.no, name: f.name, struct: f.struct, lastDate: f.lastDate,
-        folder: f.folder, book: f.book, frames: f.frames.map(x => ({ n: x.n, pos: x.pos })), dataCreated: d.created };
-      await putOne('fac', fac); nFac++;
-      for (let i = 0; i < f.frames.length; i++) {
-        await putOne('img', f.frames[i].img ? 'data:image/jpeg;base64,' + f.frames[i].img : '', f.id + '|' + i);
-        if (f.frames[i].img) nImg++;
-      }
-      // 記録がまだ写真を撮っていなければ、新しい枠に合わせる
-      const r = recs.get(f.id);
-      if (r && !r.blocks.length && !r.slots.some(s => s.type === 'a')) { recs.delete(f.id); await reqP(tx('rec', 'readwrite').delete(f.id)); }
+    try {
+      // 1 ファイル分をまとめて 1 回で書く（速い）
+      await new Promise((res, rej) => {
+        const t = db.transaction(['fac', 'img', 'rec'], 'readwrite');
+        t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+        for (const f of d.facilities) {
+          t.objectStore('fac').put({ id: f.id, route: d.route, category: d.category, no: f.no, name: f.name, struct: f.struct, lastDate: f.lastDate,
+            folder: f.folder, book: f.book, frames: f.frames.map(x => ({ n: x.n, pos: x.pos })), dataCreated: d.created });
+          f.frames.forEach((x, i) => t.objectStore('img').put(x.img ? 'data:image/jpeg;base64,' + x.img : '', f.id + '|' + i));
+          // 記録がまだ写真を撮っていなければ、新しい枠に合わせる
+          const r = recs.get(f.id);
+          if (r && !r.blocks.length && !r.slots.some(s => s.type === 'a')) { recs.delete(f.id); t.objectStore('rec').delete(f.id); }
+        }
+      });
+      for (const f of d.facilities) { nFac++; nImg += f.frames.filter(x => x.img).length; }
+    } catch (e) {
+      stop = (e && e.name === 'QuotaExceededError') ? 'iPad の空き容量が足りなくなりました。' : '書き込めませんでした：' + (e && e.message || e);
+      stop += '\n' + file.name + ' から後は読み込んでいません。';
+      break;
     }
   }
+  ov.remove();
   imgCache.clear();
-  try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
   await loadAll();
   render();
-  await modal('読み込みました', h('p', null, '施設 ' + nFac + ' 件・去年の写真 ' + nImg + ' 枚' + (bad.length ? '\n読めなかったファイル：' + bad.join('、') : '')), [{ label: 'OK', value: true, cls: 'main' }]);
+  await modal(stop ? '途中で止まりました' : '読み込みました',
+    h('p', null, 'ファイル ' + files.length + ' 個 → 施設 ' + nFac + ' 件・去年の写真 ' + nImg + ' 枚' +
+      (bad.length ? '\n読めなかったファイル：' + bad.join('、') : '') + (stop ? '\n\n' + stop : '')),
+    [{ label: 'OK', value: true, cls: 'main' }]);
 }
 
 // ---------- 記録の書き出し ----------
@@ -473,6 +494,8 @@ function renderSettings() {
         h('div', { class: 'row' }, h('div', { style: 'width:160px' }, dev), h('div', { style: 'flex:1;min-width:200px' }, nm))),
       h('div', { class: 'sec' }, h('h3', null, '施設のデータ'),
         h('p', { class: 'muted', style: 'margin-top:0' }, '入っている施設：' + nFac + ' 件。年度が変わったら、PC で作り直したデータを読み込みます（撮影記録は消えません）。'),
+        h('p', { class: 'muted', id: 'storage', style: 'margin-top:0' }, ''),
+        h('p', { class: 'muted', style: 'margin-top:0' }, 'ファイルは何個でもまとめて選べます（「選択」→ 全部にチェック →「開く」）。'),
         h('button', { class: 'main', onclick: importData }, 'データを読み込む')),
       h('div', { class: 'sec' }, h('h3', null, '撮影記録'),
         h('p', { class: 'muted', style: 'margin-top:0' }, '記録のある施設：' + nRec + ' 件'),
@@ -488,6 +511,12 @@ function renderSettings() {
           h('li', null, '失敗して余分に撮ったら「撮り損じ」、押しまちがえたら「1つ戻す」。'),
           h('li', null, '帰ったら「記録を書き出す」で PC へ送る（AirDrop・メール・ファイル保存）。'))),
       h('p', { class: 'muted' }, 'アプリ ' + APP_VER)));
+  // 使っている容量
+  if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then(e => {
+    const el = document.getElementById('storage'); if (!el || !e) return;
+    const mb = (x) => Math.round(x / 1048576).toLocaleString();
+    el.textContent = '使っている容量：' + mb(e.usage || 0) + ' MB' + (e.quota ? '（使える上限の目安 ' + mb(e.quota) + ' MB）' : '');
+  }).catch(() => {});
 }
 async function clearRecords() {
   if (!await confirmBox('撮影記録を全部消しますか？', '先に「記録を書き出す」で PC へ送ってください。消した記録は戻せません。', '全部消す')) return;

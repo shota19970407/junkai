@@ -1,5 +1,5 @@
 // 電波がなくても動くように、アプリの部品を iPad にしまっておく
-const CACHE = 'junkai-v1.2.0';   // アプリを直したら、ここの番号を上げる
+const CACHE = 'junkai-v1.3.0';   // アプリを直したら、ここの番号を上げる
 const FILES = ['./', './index.html', './app.js', './qrcode.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
