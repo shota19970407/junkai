@@ -7,7 +7,7 @@
 // ============================================================
 'use strict';
 
-const APP_VER = '1.3.0';
+const APP_VER = '1.4.0';
 const QR_PREFIX = 'JK1';           // QR の中身：JK1/<施設ID>/<iPad番号>/<しおり番号>
 
 // ---------- 設定（この iPad だけ） ----------
@@ -219,13 +219,15 @@ async function renderFac() {
     const skip = !!rec.skip[s.k];
     const fi = s.type === 'f' ? parseInt(s.k.slice(1)) : -1;
     const img = fi >= 0 ? imgs[fi] : '';
+    const note = fi >= 0 ? (fac.frames[fi].note || '') : '';   // 写真台紙のコメント（例 ・添架物状況）
     const cls = 'card' + (s.type === 'a' ? ' added' : '') + (sh ? ' shot' : '') + (skip ? ' skip' : '') + (nx && nx.k === s.k ? ' next' : '');
     cards.push(h('div', { class: cls, id: 'c_' + s.k },
-      h('div', { class: 'ph', onclick: img ? () => showViewer(img, slotLabel(rec, s) + '　' + (s.pos || '')) : null },
+      h('div', { class: 'ph', onclick: img ? () => showViewer(img, slotLabel(rec, s) + '　' + (s.pos || '') + (note ? '\n' + note : '')) : null },
         img ? h('img', { src: img, alt: '' }) : h('span', null, s.type === 'a' ? '今年の追加の写真' : '去年の写真なし'),
         img ? h('span', { class: 'tag' }, '去年') : null),
       h('div', { class: 'body' },
         h('div', { class: 'ttl' }, h('b', null, slotLabel(rec, s)), h('span', null, s.pos || (s.type === 'a' ? '（位置を入れてください）' : ''))),
+        note ? h('div', { class: 'note' }, note) : null,
         s.memo ? h('div', { class: 'muted' }, 'メモ：' + s.memo) : null,
         h('div', { class: 'cam' }, skip ? '撮らない' : sh ? '📷 カメラ ' + camText(rec, sh) : '未'),
         h('div', { class: 'acts' },
@@ -433,7 +435,7 @@ async function importData() {
         t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
         for (const f of d.facilities) {
           t.objectStore('fac').put({ id: f.id, route: d.route, category: d.category, no: f.no, name: f.name, struct: f.struct, lastDate: f.lastDate,
-            folder: f.folder, book: f.book, frames: f.frames.map(x => ({ n: x.n, pos: x.pos })), dataCreated: d.created });
+            folder: f.folder, book: f.book, frames: f.frames.map(x => ({ n: x.n, pos: x.pos, note: x.note || '' })), dataCreated: d.created });
           f.frames.forEach((x, i) => t.objectStore('img').put(x.img ? 'data:image/jpeg;base64,' + x.img : '', f.id + '|' + i));
           // 記録がまだ写真を撮っていなければ、新しい枠に合わせる
           const r = recs.get(f.id);
