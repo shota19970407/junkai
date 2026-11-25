@@ -1,5 +1,5 @@
 // ============================================================
-//  定期巡回アプリ（iPad 用・電波なしで動く）
+//  巡回番長（定期巡回の iPad アプリ・電波なしで動く）
 //  ・施設を選ぶ → しおりQRを画面に出してカメラで撮る（1枚目）
 //  ・撮るたびに「OK」を押す → カメラの何枚目かを記録し、その枠は隠す
 //  ・損傷が増えたら「＋追加」で枠を足す（「✕ 追加をやめる」で消せる）
@@ -7,7 +7,7 @@
 // ============================================================
 'use strict';
 
-const APP_VER = '1.4.0';
+const APP_VER = '1.4.1';
 const QR_PREFIX = 'JK1';           // QR の中身：JK1/<施設ID>/<iPad番号>/<しおり番号>
 
 // ---------- 設定（この iPad だけ） ----------
@@ -147,7 +147,7 @@ function renderHome() {
 
   $app.replaceChildren(
     h('header', { class: 'bar' },
-      h('h1', null, '定期巡回　iPad ' + settings.deviceNo + (settings.deviceName ? '（' + settings.deviceName + '）' : '')),
+      h('h1', null, '巡回番長　iPad ' + settings.deviceNo + (settings.deviceName ? '（' + settings.deviceName + '）' : '')),
       h('button', { onclick: () => exportRecords() }, '記録を書き出す'),
       h('button', { onclick: () => go({ name: 'settings' }) }, '設定')),
     h('main', null,

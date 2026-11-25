@@ -1,6 +1,6 @@
 {
-  "name": "定期巡回",
-  "short_name": "定期巡回",
+  "name": "巡回番長",
+  "short_name": "巡回番長",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
